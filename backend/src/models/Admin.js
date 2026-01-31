@@ -1,34 +1,53 @@
-const { pool } = require('../config/database');
+const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
-// Admin Model
-class Admin {
-    static async getByEmail(email) {
-        const [rows] = await pool.query('SELECT * FROM admins WHERE email = ?', [email]);
-        return rows[0];
+const adminSchema = new mongoose.Schema({
+    email: {
+        type: String,
+        required: [true, 'Email is required'],
+        unique: true,
+        trim: true,
+        lowercase: true
+    },
+    password: {
+        type: String,
+        required: [true, 'Password is required'],
+        minlength: 6
     }
+}, {
+    timestamps: true
+});
 
-    static async create(email, password) {
-        const hashedPassword = await bcrypt.hash(password, 10);
-        const [result] = await pool.query(
-            'INSERT INTO admins (email, password) VALUES (?, ?)',
-            [email, hashedPassword]
-        );
-        return result.insertId;
-    }
+// Hash password before saving
+adminSchema.pre('save', async function (next) {
+    if (!this.isModified('password')) return next();
+    this.password = await bcrypt.hash(this.password, 10);
+    next();
+});
 
-    static async verifyPassword(password, hashedPassword) {
-        return await bcrypt.compare(password, hashedPassword);
-    }
+// Static methods
+adminSchema.statics.getByEmail = function (email) {
+    return this.findOne({ email });
+};
 
-    static generateToken(admin) {
-        return jwt.sign(
-            { id: admin.id, email: admin.email, role: 'admin' },
-            process.env.JWT_SECRET,
-            { expiresIn: '24h' }
-        );
-    }
-}
+adminSchema.statics.createAdmin = async function (email, password) {
+    const admin = new this({ email, password });
+    await admin.save();
+    return admin._id;
+};
 
-module.exports = Admin;
+// Instance methods
+adminSchema.methods.verifyPassword = async function (password) {
+    return await bcrypt.compare(password, this.password);
+};
+
+adminSchema.methods.generateToken = function () {
+    return jwt.sign(
+        { id: this._id, email: this.email, role: 'admin' },
+        process.env.JWT_SECRET,
+        { expiresIn: '24h' }
+    );
+};
+
+module.exports = mongoose.models.Admin || mongoose.model('Admin', adminSchema);
